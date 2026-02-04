@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / Packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Application Specific
+logs/
+.dep_installed
+settings.json
+configuration template/
+
+# IDE
+.vscode/
+.idea/
+
+# Excel Temp Files
+~$*.xlsx

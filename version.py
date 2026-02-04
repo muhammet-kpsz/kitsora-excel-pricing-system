@@ -1,0 +1,6 @@
+VERSION = "0.1.0"
+BUILD_DATE = "2026-02-04"
+APP_NAME = "Kitsora"
+COMPANY_NAME = "muhammet-kpsz"
+CONTACT_EMAIL = "muhammetkapusuz.tr@gmail.com"
+WEB_SITE = "https://github.com/muhammet-kpsz"
