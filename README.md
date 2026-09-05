@@ -26,8 +26,9 @@
 - **Global Kâr Limiti:** Zarar etmenizi önleyen "Minimum Kâr" koruması.
 - **Baz Fiyat Seçimi:** İster "Alış Fiyatı", ister "Piyasa Fiyatı" üzerinden hesaplama yapın.
 
-### 🎨 Görsel Özelleştirme ve Kimlik
+### 🎨 Görsel Özelleştirme ve Diğer Özellikler
 
+- **Barkod Üretici:** Ürünlere benzersiz ön ekli rastgele barkodlar (örn: HFGYM33136552) üretebilir ve güvenle yazdırabilirsiniz.
 - **Kitsora Teması:** Turuncu-krem tonlarında özel tasarlanmış modern arayüz.
 - **Açık/Koyu Mod:** Göz yormayan tema seçenekleri.
 - **Varyant Desteği:** Varyantlı ürünleri gruplayarak veya tekil olarak yönetme.
@@ -64,6 +65,7 @@
 3. **Kategorileri Ayarla:** Kategori sekmesinden çalışmak istediğiniz ürün gruplarını seçin.
 4. **Kâr Ekle:** Fiyat segmentlerine göre kâr oranlarınızı girin.
 5. **Önizle:** "Ürün Önizleme" sekmesinden fiyatların nasıl değiştiğini kontrol edin.
-6. **Dışa Aktar:** Sonucu yeni bir Excel dosyası olarak kaydedin.
+6. **Barkod Oluşturma (Opsiyonel):** "Güncellenecek Sütunlar" kısmından barkod oluşturmayı aktifleştirebilir ve ön ekinizi belirleyebilirsiniz.
+7. **Dışa Aktar:** Sonucu yeni bir Excel dosyası olarak kaydedin.
 
 ---

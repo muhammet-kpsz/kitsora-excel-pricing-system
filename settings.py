@@ -9,12 +9,15 @@ DEFAULT_SETTINGS = {
         "buy_price_col": "",
         "sell_price_col": "",
         "discounted_price_col": "",
-        "market_price_col": ""
+        "market_price_col": "",
+        "barcode_col": "",
+        "barcode_prefix": "HFGYM"
     },
     "targets": {
         "update_discounted": True,
         "update_sell": True,
-        "update_market": False
+        "update_market": False,
+        "update_barcode": False
     },
     "categories": {
         "default_discount": 50.0,

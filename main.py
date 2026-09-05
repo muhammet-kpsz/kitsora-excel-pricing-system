@@ -580,6 +580,7 @@ class MainWindow(QMainWindow):
                 "  - <b>Ürün Adı:</b> Ürün ismini içeren sütun",
                 "  - <b>Kategori:</b> Kategori bilgisi (opsiyonel)",
                 "  - <b>Alış/Satış Fiyatları:</b> Mevcut fiyat sütunları",
+                "  - <b>Barkod Sütunu:</b> Barkod atamak/üretmek istediğiniz sütun",
                 "• ⚠️ Zorunlu alanlar: Stok Kodu, Ürün Adı, Alış Fiyatı"
             ],
             "#9b59b6"
@@ -902,6 +903,14 @@ class MainWindow(QMainWindow):
         self.combo_market = QComboBox()
         form.addRow(QLabel("<b>Temel Sütunlar:</b>"))
         form.addRow("Stok Kodu / Barkod:", self.combo_stock)
+        
+        # ===== NEW FEATURE: Barcode Feature =====
+        self.combo_barcode_col = QComboBox()
+        self.edit_barcode_prefix = QLineEdit("HFGYM")
+        form.addRow("Barkod Sütunu:", self.combo_barcode_col)
+        form.addRow("Barkod Ön Eki:", self.edit_barcode_prefix)
+        # ===== END NEW FEATURE =====
+        
         form.addRow("Ürün Adı:", self.combo_name)
         
         
@@ -962,9 +971,16 @@ class MainWindow(QMainWindow):
         self.chk_update_sell = QCheckBox("Satış Fiyatını Güncelle")
         self.chk_update_market = QCheckBox("Piyasa Fiyatını Güncelle")
         
+        # ===== NEW FEATURE: Barcode Target =====
+        self.chk_update_barcode = QCheckBox("Barkodları Güncelle/Oluştur")
+        self.chk_update_barcode.setToolTip("Eğer işaretlenirse, seçili barkod sütununa benzersiz barkodlar üretilip yazılır.")
+        # ===== END NEW FEATURE =====
+        
         t_layout.addWidget(self.chk_update_disc)
         t_layout.addWidget(self.chk_update_sell)
         t_layout.addWidget(self.chk_update_market)
+        t_layout.addWidget(self.chk_update_barcode)
+        
         t_group.setLayout(t_layout)
         layout.addWidget(t_group)
         
@@ -1340,10 +1356,11 @@ class MainWindow(QMainWindow):
 
     def load_headers(self, fname):
         self.current_headers = self.io.get_headers(fname)
-        # ===== NEW FEATURE: Added combo_stock_col to list =====
+        # ===== NEW FEATURE: Added combo_stock_col and combo_barcode_col to list =====
         combos = [self.combo_stock, self.combo_name, self.combo_cat, 
                   self.combo_buy, self.combo_sell, self.combo_disc, self.combo_market, 
-                  self.combo_variant, self.combo_variant_val, self.combo_stock_col]
+                  self.combo_variant, self.combo_variant_val, self.combo_stock_col,
+                  self.combo_barcode_col]
         # ===== END NEW FEATURE =====
         valid_headers = [h for h in self.current_headers if h]
         
@@ -1362,8 +1379,9 @@ class MainWindow(QMainWindow):
             "PIYASA": self.combo_market, "PİYASA": self.combo_market,
             "VARYANT": self.combo_variant, "VARIANT": self.combo_variant, "GRUP KODU": self.combo_variant, "GROUP CODE": self.combo_variant,
             "VARYASYON": self.combo_variant_val, "VARIATION": self.combo_variant_val, "ÖZELLİK": self.combo_variant_val, "FEATURE": self.combo_variant_val,
-            # ===== NEW FEATURE: Stock column auto-mapping =====
-            "ADET": self.combo_stock_col, "MIKTAR": self.combo_stock_col, "QTY": self.combo_stock_col, "QUANTITY": self.combo_stock_col, "ENVANTER": self.combo_stock_col
+            # ===== NEW FEATURE: Stock and Barcode column auto-mapping =====
+            "ADET": self.combo_stock_col, "MIKTAR": self.combo_stock_col, "QTY": self.combo_stock_col, "QUANTITY": self.combo_stock_col, "ENVANTER": self.combo_stock_col,
+            "BARKOD": self.combo_barcode_col
             # ===== END NEW FEATURE =====
         }
         
@@ -1540,17 +1558,20 @@ class MainWindow(QMainWindow):
             "variant_val_col": self.combo_variant_val.currentText(),
             "is_variant_mode": self.chk_variants.isChecked(),
             "show_unique_variant": self.chk_unique_variant.isChecked(),
-            # ===== NEW FEATURE: Save stock settings =====
+            # ===== NEW FEATURE: Save stock and barcode settings =====
             "stock_col": self.combo_stock_col.currentText(),
             "include_zero_stock": self.chk_include_zero_stock.isChecked(),
-            "no_category_mode": self.chk_no_categories.isChecked()
+            "no_category_mode": self.chk_no_categories.isChecked(),
+            "barcode_col": self.combo_barcode_col.currentText(),
+            "barcode_prefix": self.edit_barcode_prefix.text()
             # ===== END NEW FEATURE =====
         })
         
         self.sm.set("targets", {
             "update_discounted": self.chk_update_disc.isChecked(),
             "update_sell": self.chk_update_sell.isChecked(),
-            "update_market": self.chk_update_market.isChecked()
+            "update_market": self.chk_update_market.isChecked(),
+            "update_barcode": self.chk_update_barcode.isChecked()
         })
         
         # Categories
@@ -1644,6 +1665,9 @@ class MainWindow(QMainWindow):
         self.chk_update_disc.setChecked(s.get("targets", {}).get("update_discounted", True))
         self.chk_update_sell.setChecked(s.get("targets", {}).get("update_sell", True))
         self.chk_update_market.setChecked(s.get("targets", {}).get("update_market", True))
+        self.chk_update_barcode.setChecked(s.get("targets", {}).get("update_barcode", False))
+        
+        self.edit_barcode_prefix.setText(mappings.get("barcode_prefix", "HFGYM"))
         
         # Theme
         theme = s.get("theme", "system")
@@ -2060,7 +2084,10 @@ class MainWindow(QMainWindow):
                 col_idx += 1
                 
             # ===== NEW FEATURE: Show full category path instead of just main =====
-            full_cat_path = res.get("full_category_path", res.get("main_category", ""))
+            full_cat_path = res.get("full_category_path")
+            if not full_cat_path:
+                full_cat_path = res.get("main_category", "")
+                
             cat_item = QTableWidgetItem(str(full_cat_path))
             
             # Make it clickable (blue, underlined) if it has subcategories
@@ -2542,7 +2569,9 @@ class MainWindow(QMainWindow):
                     "discounted_price_col": self.combo_disc,
                     "market_price_col": self.combo_market,
                     "variant_id_col": self.combo_variant,
-                    "variant_val_col": self.combo_variant_val
+                    "variant_val_col": self.combo_variant_val,
+                    "stock_col": self.combo_stock_col,
+                    "barcode_col": self.combo_barcode_col
                 }
                 
                 # Checkbox
