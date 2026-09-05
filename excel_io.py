@@ -52,7 +52,7 @@ class ExcelHandler:
             print(f"Error reading rows: {e}")
             return []
 
-    def process_and_save_generator(self, filepath, settings_manager, pricing_engine):
+    def process_and_save_generator(self, filepath, settings_manager, pricing_engine, existing_barcodes=None, selected_stock_codes=None, selected_variant_ids=None):
         """
         Generator that yields progress updates:
         (status_type, data)
@@ -74,7 +74,10 @@ class ExcelHandler:
         def log_debug(msg):
             debug_log.write(f"{msg}\n")
             debug_log.flush()
-            print(f"[DEBUG] {msg}")
+            try:
+                print(f"[DEBUG] {msg}")
+            except Exception:
+                pass
             # Return tuple for yielding to GUI
             return ("LOG", f"{msg}")
         
@@ -95,6 +98,7 @@ class ExcelHandler:
             col_barcode = mappings.get("barcode_col")
             barcode_prefix = mappings.get("barcode_prefix", "HFGYM")
             update_barcode = targets.get("update_barcode", False)
+            col_variant = mappings.get("variant_id_col") if mappings.get("is_variant_mode", False) else None
             # ===== END NEW FEATURE =====
             
             # LOG: Initial settings
@@ -161,7 +165,8 @@ class ExcelHandler:
             
             # ===== NEW FEATURE: Barcode generation =====
             import random
-            used_barcodes = set()
+            used_barcodes = set(existing_barcodes) if existing_barcodes else set()
+            newly_generated_barcodes = set()
             # ===== END NEW FEATURE =====
 
             for row_vals in row_iterator:
@@ -261,25 +266,42 @@ class ExcelHandler:
                         if col_barcode in header_map:
                             idx = header_map[col_barcode]
                             old_value = row_vals[idx]
+                            old_str = str(old_value).strip() if old_value is not None else ""
+                            if old_str in ["None", "nan", "-"]:
+                                old_str = ""
                             
-                            # Generate unique barcode
-                            while True:
-                                rnd = str(random.randint(10000000, 99999999))
-                                new_barcode = f"{barcode_prefix}{rnd}"
-                                if new_barcode not in used_barcodes:
-                                    used_barcodes.add(new_barcode)
-                                    break
+                            # Check if we should update barcode for this product
+                            should_update = True
+                            stock_code = str(res.get("stock_code", "")).strip().lower()
+                            row_variant = str(row_dict.get(col_variant, "")).strip().lower() if col_variant else ""
+                            
+                            if selected_stock_codes is not None:
+                                is_selected = (stock_code in selected_stock_codes) or (row_variant and selected_variant_ids and row_variant in selected_variant_ids)
+                                if not is_selected:
+                                    should_update = False
+                                    if row_num <= 5:
+                                        yield log_debug(f"  Barkod atlandı: Seçili değil (Stok Kodu: {stock_code}, Varyant: '{row_variant}', Mevcut: '{old_str}')")
                                     
-                            row_vals[idx] = new_barcode
-                            update_count["barcode"] += 1
-                            
-                            if row_num <= 5:
-                                yield log_debug(f"  Barkod güncellendi: {old_value} -> {new_barcode}")
+                            if should_update:
+                                # Generate unique barcode
+                                while True:
+                                    rnd = str(random.randint(10000000, 99999999))
+                                    new_barcode = f"{barcode_prefix}{rnd}"
+                                    if new_barcode not in used_barcodes:
+                                        used_barcodes.add(new_barcode)
+                                        newly_generated_barcodes.add(new_barcode)
+                                        break
+                                        
+                                row_vals[idx] = new_barcode
+                                update_count["barcode"] += 1
+                                
+                                if row_num <= 5:
+                                    yield log_debug(f"  Barkod güncellendi: '{old_str}' -> '{new_barcode}'")
                         else:
                             if row_num <= 5:
                                 yield log_debug(f"  UYARI: '{col_barcode}' sütunu header_map'te bulunamadı!")
-                    elif row_num <= 5:
-                        yield log_debug(f"  Barkod atlandı (target: {update_barcode}, col: '{col_barcode}')")
+                    elif row_num <= 5 and update_barcode:
+                        yield log_debug(f"  Barkod atlandı: Barkod sütunu eşleştirilmemiş (col: '{col_barcode}')")
                     # ===== END NEW FEATURE =====
                 
                 # ===== NEW FEATURE: Apply export filters (stock + category) =====
@@ -372,15 +394,15 @@ class ExcelHandler:
             if targets.get("update_barcode", False):
                 yield log_debug(f"\n[ANALİZ] Barkod Benzersizlik Kontrolü:")
                 generated_count = update_count.get("barcode", 0)
-                unique_count = len(used_barcodes)
+                unique_count = len(newly_generated_barcodes)
                 yield log_debug(f"  - Üretilen Toplam Barkod Sayısı: {generated_count}")
                 yield log_debug(f"  - Benzersiz Barkod Sayısı: {unique_count}")
                 if generated_count == unique_count and generated_count > 0:
-                    yield log_debug("  ✓ DURUM: BAŞARILI (Tüm barkodlar benzersiz!)")
+                    yield log_debug("  [OK] DURUM: BAŞARILI (Tüm yeni üretilen barkodlar benzersiz!)")
                 elif generated_count > 0:
-                    yield log_debug("  ✗ DURUM: HATA (Kopya barkodlar tespit edildi!)")
+                    yield log_debug("  [HATA] DURUM: HATA (Kopya barkodlar tespit edildi!)")
                 else:
-                    yield log_debug("  - DURUM: Barkod üretilmedi.")
+                    yield log_debug("  - DURUM: Barkod üretilmedi (Seçili ürün bulunamadı veya şartlar sağlanmadı).")
             # ===== END NEW FEATURE =====
             
             yield log_debug(f"{'='*80}")

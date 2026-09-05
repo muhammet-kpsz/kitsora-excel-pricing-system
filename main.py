@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, 
                                QCheckBox, QSpinBox, QDoubleSpinBox, QMessageBox, QProgressBar,
                                QGroupBox, QFormLayout, QStyleFactory, QProgressDialog,
-                               QPlainTextEdit, QStackedWidget, QDialog, QMenu, QScrollArea)
+                               QPlainTextEdit, QStackedWidget, QDialog, QMenu, QScrollArea,
+                               QRadioButton, QButtonGroup)
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QIcon, QPalette, QColor, QFont, QPixmap
 
@@ -31,19 +32,25 @@ class Worker(QThread):
     finished = Signal(bool, str)
     log_message = Signal(str)  # For debug messages to GUI
     
-    def __init__(self, filepath, settings_manager, pricing_engine):
+    def __init__(self, filepath, settings_manager, pricing_engine, existing_barcodes=None, selected_stock_codes=None, selected_variant_ids=None):
         super().__init__()
         self.filepath = filepath
         self.sm = settings_manager
         self.engine = pricing_engine
         self.io = ExcelHandler()
+        self.existing_barcodes = existing_barcodes if existing_barcodes else set()
+        self.selected_stock_codes = selected_stock_codes
+        self.selected_variant_ids = selected_variant_ids
 
     def run(self):
         # The generator is now in ExcelHandler
         gen = self.io.process_and_save_generator(
             self.filepath, 
             self.sm, 
-            self.engine
+            self.engine,
+            self.existing_barcodes,
+            self.selected_stock_codes,
+            self.selected_variant_ids
         )
         
         for status_type, data in gen:
@@ -85,7 +92,7 @@ class PreviewWorker(QThread):
     finished = Signal(list, int, set) # results, changed_count, categories_set
     
     def __init__(self, all_rows, engine, search_txt, cat_filter, variant_col=None, variant_val_col=None, show_unique_variant=False, 
-                 stock_col=None, include_zero_stock=True, selected_categories=None):  # NEW: Added stock and category filter params
+                 stock_col=None, include_zero_stock=True, selected_categories=None, barcode_col=None):  # NEW: Added barcode_col
         super().__init__()
         self.all_rows = all_rows
         self.engine = engine
@@ -98,6 +105,7 @@ class PreviewWorker(QThread):
         self.stock_col = stock_col
         self.include_zero_stock = include_zero_stock
         self.selected_categories = selected_categories if selected_categories else []
+        self.barcode_col = barcode_col
         # ===== END NEW FEATURE =====
 
     def run(self):
@@ -112,6 +120,20 @@ class PreviewWorker(QThread):
         for r_data in self.all_rows:
             res = self.engine.calculate_row(r_data)
             res["_raw_data"] = r_data # Attach raw data for comparison
+            
+            # Extract existing barcode if column is mapped
+            if self.barcode_col:
+                raw_bc = r_data.get(self.barcode_col)
+                if raw_bc is not None:
+                    bc_val = str(raw_bc).strip()
+                    res["_existing_barcode"] = bc_val if bc_val not in ["None", "nan", "-"] else ""
+                else:
+                    res["_existing_barcode"] = ""
+            else:
+                res["_existing_barcode"] = ""
+            
+            # Default selection state for barcode generation: unselected by default
+            res["_barcode_selected"] = False
             
             s_code = str(res.get("stock_code", "")).lower()
             p_name = str(res.get("product_name", "")).lower()
@@ -300,12 +322,14 @@ class MainWindow(QMainWindow):
         self.current_headers = []
         # ===== NEW FEATURE: Persistent Category State =====
         self.persistent_selected_categories = set()
+        self.selected_barcode_stock_codes = set()
         # ===== END NEW FEATURE =====
         
         self.apply_theme() # Move after SM init to read settings
         
         self.setup_ui()
         self.load_ui_values()
+        self.update_barcode_controls_style()
         
         # Search Debouncing
         self.search_timer = QTimer()
@@ -458,6 +482,70 @@ class MainWindow(QMainWindow):
             palette.setColor(QPalette.Highlight, QColor(0, 120, 215))
             palette.setColor(QPalette.HighlightedText, Qt.white)
             app.setPalette(palette)
+            
+        self.update_barcode_controls_style(mode)
+
+    def update_barcode_controls_style(self, mode=None):
+        """Ensures barcode radio buttons and their container are clearly readable in all themes."""
+        if not hasattr(self, 'group_barcode_settings'):
+            return
+        if mode is None:
+            theme = self.sm.get("theme", "system")
+            if theme == "system":
+                mode = "dark" if self.is_system_dark() else "light"
+            else:
+                mode = theme
+
+        if mode == "dark":
+            text_color = "#f3f4f6"
+            title_color = "#60a5fa"
+            border_color = "#4b5563"
+            bg_color = "#2b2b2b"
+            radio_hover = "#374151"
+        elif mode == "kitsora":
+            text_color = "#3c281e"
+            title_color = "#d97706"
+            border_color = "#fed7aa"
+            bg_color = "#fff7ed"
+            radio_hover = "#ffedd5"
+        else:  # light / white theme
+            text_color = "#111827"  # High contrast dark color for readability
+            title_color = "#1d4ed8"  # Darker blue title
+            border_color = "#cbd5e1"
+            bg_color = "#f8fafc"
+            radio_hover = "#e2e8f0"
+
+        self.group_barcode_settings.setStyleSheet(f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: {title_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 14px;
+                padding-bottom: 8px;
+                padding-left: 8px;
+                padding-right: 8px;
+                background-color: {bg_color};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+                left: 10px;
+            }}
+            QRadioButton {{
+                color: {text_color};
+                font-weight: normal;
+                font-size: 13px;
+                padding: 4px 6px;
+                background: transparent;
+            }}
+            QRadioButton:hover {{
+                background-color: {radio_hover};
+                border-radius: 4px;
+            }}
+        """)
 
     # ===== NEW FEATURE: Helper to detect system dark mode =====
     def is_system_dark(self):
@@ -974,12 +1062,35 @@ class MainWindow(QMainWindow):
         # ===== NEW FEATURE: Barcode Target =====
         self.chk_update_barcode = QCheckBox("Barkodları Güncelle/Oluştur")
         self.chk_update_barcode.setToolTip("Eğer işaretlenirse, seçili barkod sütununa benzersiz barkodlar üretilip yazılır.")
+        
+        # Sub-group for barcode update settings (visible only when chk_update_barcode is checked)
+        self.group_barcode_settings = QGroupBox("Barkod Güncelleme Ayarları")
+        b_layout = QVBoxLayout()
+        b_layout.setContentsMargins(10, 10, 10, 10)
+        b_layout.setSpacing(6)
+        
+        self.radio_barcode_all = QRadioButton("Tüm barkodları güncelle")
+        self.radio_barcode_selected = QRadioButton("Seçili barkodları güncelle")
+        self.radio_barcode_all.setChecked(True)
+        
+        self.bg_barcode_mode = QButtonGroup(self)
+        self.bg_barcode_mode.addButton(self.radio_barcode_all)
+        self.bg_barcode_mode.addButton(self.radio_barcode_selected)
+        
+        b_layout.addWidget(self.radio_barcode_all)
+        b_layout.addWidget(self.radio_barcode_selected)
+        self.group_barcode_settings.setLayout(b_layout)
+        
+        # Show/hide container when checkbox is toggled
+        self.chk_update_barcode.toggled.connect(self.on_barcode_target_toggled)
+        self.group_barcode_settings.setVisible(False)
         # ===== END NEW FEATURE =====
         
         t_layout.addWidget(self.chk_update_disc)
         t_layout.addWidget(self.chk_update_sell)
         t_layout.addWidget(self.chk_update_market)
         t_layout.addWidget(self.chk_update_barcode)
+        t_layout.addWidget(self.group_barcode_settings)
         
         t_group.setLayout(t_layout)
         layout.addWidget(t_group)
@@ -1219,6 +1330,8 @@ class MainWindow(QMainWindow):
         self.table_preview.horizontalHeader().sectionClicked.connect(self.on_preview_header_clicked)
         # Click handler for variants
         self.table_preview.cellClicked.connect(self.on_preview_cell_clicked)
+        # Checkbox handler
+        self.table_preview.itemChanged.connect(self.on_preview_item_changed)
         # Context Menu
         self.table_preview.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table_preview.customContextMenuRequested.connect(self.show_preview_context_menu)
@@ -1295,6 +1408,12 @@ class MainWindow(QMainWindow):
         return widget
 
     # --- Logic ---
+
+    def on_barcode_target_toggled(self, checked):
+        if hasattr(self, 'group_barcode_settings'):
+            self.group_barcode_settings.setVisible(checked)
+        if hasattr(self, 'filtered_rows') and self.filtered_rows:
+            self.update_table_view()
 
     def on_theme_changed(self, text):
         map_theme = {
@@ -1571,7 +1690,8 @@ class MainWindow(QMainWindow):
             "update_discounted": self.chk_update_disc.isChecked(),
             "update_sell": self.chk_update_sell.isChecked(),
             "update_market": self.chk_update_market.isChecked(),
-            "update_barcode": self.chk_update_barcode.isChecked()
+            "update_barcode": self.chk_update_barcode.isChecked(),
+            "barcode_mode": "all" if self.radio_barcode_all.isChecked() else "selected"
         })
         
         # Categories
@@ -1666,6 +1786,12 @@ class MainWindow(QMainWindow):
         self.chk_update_sell.setChecked(s.get("targets", {}).get("update_sell", True))
         self.chk_update_market.setChecked(s.get("targets", {}).get("update_market", True))
         self.chk_update_barcode.setChecked(s.get("targets", {}).get("update_barcode", False))
+        
+        barcode_mode = s.get("targets", {}).get("barcode_mode", "all")
+        if barcode_mode == "selected":
+            self.radio_barcode_selected.setChecked(True)
+        else:
+            self.radio_barcode_all.setChecked(True)
         
         self.edit_barcode_prefix.setText(mappings.get("barcode_prefix", "HFGYM"))
         
@@ -1823,7 +1949,8 @@ class MainWindow(QMainWindow):
             # ===== NEW FEATURE: Pass new parameters =====
             stock_col=stock_col,
             include_zero_stock=include_zero_stock,
-            selected_categories=selected_cats
+            selected_categories=selected_cats,
+            barcode_col=self.combo_barcode_col.currentText() if hasattr(self, 'combo_barcode_col') else None
             # ===== END NEW FEATURE =====
         )
         if selected_cats:
@@ -1887,6 +2014,10 @@ class MainWindow(QMainWindow):
         self.preview_stack.setCurrentIndex(0)
 
     def on_preview_header_clicked(self, logicalIndex):
+        if self.chk_update_barcode.isChecked() and logicalIndex == 0:
+            self.toggle_all_barcode_selections()
+            return
+            
         if self.sort_col == logicalIndex:
             self.sort_asc = not self.sort_asc
         else:
@@ -1898,45 +2029,76 @@ class MainWindow(QMainWindow):
         self.update_table_view()
         self.update_pagination_controls()
 
+    def toggle_all_barcode_selections(self, force_state=None):
+        if not hasattr(self, 'filtered_rows') or not self.filtered_rows:
+            return
+        if force_state is None:
+            all_selected = all(str(r.get("stock_code", "")).strip().lower() in self.selected_barcode_stock_codes for r in self.filtered_rows)
+            new_state = not all_selected
+        else:
+            new_state = force_state
+            
+        for r in self.filtered_rows:
+            sc = str(r.get("stock_code", "")).strip().lower()
+            if sc:
+                if new_state:
+                    self.selected_barcode_stock_codes.add(sc)
+                else:
+                    self.selected_barcode_stock_codes.discard(sc)
+            
+        self.update_table_view()
+
+    def select_products_without_barcode(self):
+        if not hasattr(self, 'filtered_rows') or not self.filtered_rows:
+            return
+        for r in self.filtered_rows:
+            sc = str(r.get("stock_code", "")).strip().lower()
+            exist_bc = str(r.get("_existing_barcode", "")).strip()
+            if sc and not exist_bc:
+                self.selected_barcode_stock_codes.add(sc)
+        self.update_table_view()
+
     def sort_filtered_data(self):
-        # headers = ["Stok Kodu", "Ürün Adı", "Kategori", "Baz Fiyat", "Kâr", "Yeni İndirimli", "Yeni Etiket"]
-        # Keys map roughly to: stock_code, product_name, main_category, base_price, profit_added, final_discounted_price, label_price
-        
-        key_map = {
-            0: "stock_code",
-            1: "product_name",
-            2: "main_category", # This will be variant ID if variant mode is on, otherwise category
-            3: "base_price",
-            4: "profit_added",
-            5: "final_discounted_price",
-            6: "label_price"
-        }
-        
-        # Adjust key_map if variant column is present
+        update_bc = self.chk_update_barcode.isChecked()
         is_variant = self.chk_variants.isChecked()
+        has_stock = hasattr(self, 'combo_stock_col') and self.combo_stock_col.currentText()
+        
+        key_map = {}
+        idx = 0
+        if update_bc:
+            idx += 1  # 0 is 'Seçim'
+            key_map[idx] = "stock_code"; idx += 1
+            key_map[idx] = "_existing_barcode"; idx += 1
+        else:
+            key_map[idx] = "stock_code"; idx += 1
+            
+        key_map[idx] = "product_name"; idx += 1
+        
         if is_variant:
-            key_map[2] = "_variant_id" # Variant ID column
-            key_map[3] = "main_category" # Category column shifts
-            key_map[4] = "base_price"
-            key_map[5] = "profit_added"
-            key_map[6] = "final_discounted_price"
-            key_map[7] = "label_price"
+            key_map[idx] = "_variant_id"; idx += 1
+            
+        key_map[idx] = "main_category"; idx += 1
+        
+        if has_stock:
+            key_map[idx] = "stock_quantity"; idx += 1
+            
+        key_map[idx] = "base_price"; idx += 1
+        key_map[idx] = "profit_added"; idx += 1
+        key_map[idx] = "final_discounted_price"; idx += 1
+        key_map[idx] = "label_price"; idx += 1
 
         key = key_map.get(self.sort_col)
         if not key: return
         
         def safe_sort(item):
             v = item.get(key, "")
-            # Price/Number columns
-            if self.sort_col in [3, 4, 5, 6] or (is_variant and self.sort_col in [4, 5, 6, 7]): # Adjusted indices for variant mode
+            if key in ["base_price", "profit_added", "final_discounted_price", "label_price", "stock_quantity"]:
                 try:
-                    # Replace comma with dot if it's a string representation of a float
                     if isinstance(v, str):
                         v = v.replace(",", ".")
                     return float(v)
                 except (ValueError, TypeError):
-                    return -1.0 # Default low value for sort
-            # String columns
+                    return -1.0
             return str(v).lower()
             
         self.filtered_rows.sort(key=safe_sort, reverse=not self.sort_asc)
@@ -2052,11 +2214,17 @@ class MainWindow(QMainWindow):
             insert_pos = 3 if is_variant else 2
             headers.insert(insert_pos + 1, "Stok")  # After kategori
         # ===== END NEW FEATURE =====
+        
+        update_barcode_active = self.chk_update_barcode.isChecked()
+        if update_barcode_active:
+            headers.insert(0, "Seçim")
+            headers.insert(2, "Barkod") # 0: Seçim, 1: Stok Kodu, 2: Barkod
             
         self.table_preview.setColumnCount(len(headers))
         self.table_preview.setHorizontalHeaderLabels(headers)
         self.table_preview.setRowCount(0)
         
+        self.table_preview.blockSignals(True)
         for res in page_data:
             row = self.table_preview.rowCount()
             self.table_preview.insertRow(row)
@@ -2067,11 +2235,39 @@ class MainWindow(QMainWindow):
 
             s_code = str(res.get("stock_code", ""))
             p_name = str(res.get("product_name", ""))
+            s_code_clean = s_code.strip().lower()
             
-            self.table_preview.setItem(row, 0, QTableWidgetItem(s_code))
-            self.table_preview.setItem(row, 1, QTableWidgetItem(p_name))
+            col_idx = 0
             
-            col_idx = 2
+            if update_barcode_active:
+                # Add checkbox
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                is_selected = s_code_clean in self.selected_barcode_stock_codes
+                chk_item.setCheckState(Qt.Checked if is_selected else Qt.Unchecked)
+                # Store stock code to update persistent selection set on click
+                chk_item.setData(Qt.UserRole, s_code_clean)
+                self.table_preview.setItem(row, col_idx, chk_item)
+                col_idx += 1
+            
+            self.table_preview.setItem(row, col_idx, QTableWidgetItem(s_code)); col_idx += 1
+            
+            if update_barcode_active:
+                raw_bc = res.get("_existing_barcode", "")
+                exist_barcode = str(raw_bc).strip() if raw_bc is not None else ""
+                if exist_barcode in ["None", "nan", "-"]:
+                    exist_barcode = ""
+                bc_item = QTableWidgetItem(exist_barcode if exist_barcode else "Barkod Yok")
+                if not exist_barcode:
+                    bc_item.setBackground(QColor(255, 150, 150)) # Red background
+                    # Text darker in dark mode
+                    if self.sm.get("theme") == "dark" or (self.sm.get("theme") == "system" and self.is_system_dark()):
+                        bc_item.setForeground(Qt.black)
+                self.table_preview.setItem(row, col_idx, bc_item)
+                col_idx += 1
+            
+            self.table_preview.setItem(row, col_idx, QTableWidgetItem(p_name)); col_idx += 1
+            
             if is_variant:
                 v_id = str(res.get("_variant_id", "-"))
                 item_v_id = QTableWidgetItem(v_id)
@@ -2151,24 +2347,68 @@ class MainWindow(QMainWindow):
             for c in range(self.table_preview.columnCount()):
                 it = self.table_preview.item(row, c)
                 if it:
-                    it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                    if update_barcode_active and c == 0:
+                        flags |= Qt.ItemIsUserCheckable
+                    it.setFlags(flags)
         
+        self.table_preview.blockSignals(False)
         self.table_preview.resizeColumnsToContents()
         
+    def on_preview_item_changed(self, item):
+        # Only handle checkbox changes in the Seçim column
+        if hasattr(self, 'chk_update_barcode') and self.chk_update_barcode.isChecked() and item.column() == 0:
+            s_code = item.data(Qt.UserRole)
+            if s_code:
+                s_code = str(s_code).strip().lower()
+                is_checked = (item.checkState() == Qt.Checked)
+                
+                # Check if this product belongs to a variant group
+                is_variant = self.chk_variants.isChecked() if hasattr(self, 'chk_variants') else False
+                variant_col = self.combo_variant.currentText() if hasattr(self, 'combo_variant') else ""
+                stock_col = self.combo_stock.currentText() if hasattr(self, 'combo_stock') else ""
+                
+                target_stock_codes = {s_code}
+                if is_variant and variant_col:
+                    variant_ids = set()
+                    for r in getattr(self, 'all_rows_cache', []):
+                        sc = str(r.get(stock_col, "")).strip().lower()
+                        if sc == s_code:
+                            vid = str(r.get(variant_col, "")).strip().lower()
+                            if vid and vid not in ["", "none", "nan", "-"]:
+                                variant_ids.add(vid)
+                                
+                    if variant_ids:
+                        for r in getattr(self, 'all_rows_cache', []):
+                            vid = str(r.get(variant_col, "")).strip().lower()
+                            if vid in variant_ids:
+                                sc = str(r.get(stock_col, "")).strip().lower()
+                                if sc:
+                                    target_stock_codes.add(sc)
+                                    
+                if is_checked:
+                    self.selected_barcode_stock_codes.update(target_stock_codes)
+                else:
+                    self.selected_barcode_stock_codes.difference_update(target_stock_codes)
+                    
+                # Synchronize any other visible rows in the table
+                if len(target_stock_codes) > 1:
+                    self.table_preview.blockSignals(True)
+                    for r_idx in range(self.table_preview.rowCount()):
+                        chk_it = self.table_preview.item(r_idx, 0)
+                        if chk_it:
+                            it_sc = chk_it.data(Qt.UserRole)
+                            if it_sc in target_stock_codes:
+                                chk_it.setCheckState(Qt.Checked if is_checked else Qt.Unchecked)
+                    self.table_preview.blockSignals(False)
+
     def on_preview_cell_clicked(self, row, col):
-        # Determine logical column index for Variant ID
-        # Headers: Stock, Name, [Variant ID], ...\n        # If enabled, Variant ID is index 2.
-        
-        # ===== NEW FEATURE: Category click handler =====
-        # Find category column index
         is_variant = self.chk_variants.isChecked()
-        has_stock = hasattr(self, 'combo_stock_col') and self.combo_stock_col.currentText()
+        update_bc = self.chk_update_barcode.isChecked()
+        base_offset = 2 if update_bc else 0
         
         # Calculate category column index dynamically
-        # Base: 0=Stock Code, 1=Name, 2=Category (or Variant ID if enabled)
-        cat_col_idx = 2
-        if is_variant:
-            cat_col_idx = 3  # After Variant ID
+        cat_col_idx = (3 if is_variant else 2) + base_offset
         
         # Check if clicked on category column
         if col == cat_col_idx:
@@ -2181,11 +2421,11 @@ class MainWindow(QMainWindow):
                     dialog = CategoryDetailDialog(category, self)
                     dialog.exec()
                     return
-        # ===== END NEW FEATURE =====
         
-        if not self.chk_variants.isChecked(): return
+        if not is_variant: return
         
-        if col == 2:
+        variant_col_idx = 2 + base_offset
+        if col == variant_col_idx:
             item = self.table_preview.item(row, col)
             if not item: return
             v_id = item.text()
@@ -2283,13 +2523,25 @@ class MainWindow(QMainWindow):
         
         menu.addSeparator()
         
+        # Barcode selection actions if barcode mode active
+        if self.chk_update_barcode.isChecked():
+            action_select_all = menu.addAction("Tüm Barkodları Seç")
+            action_select_all.triggered.connect(lambda: self.toggle_all_barcode_selections(True))
+            action_select_empty = menu.addAction("Sadece Barkodu Olmayanları Seç")
+            action_select_empty.triggered.connect(lambda: self.select_products_without_barcode())
+            action_deselect_all = menu.addAction("Tüm Barkod Seçimlerini Kaldır")
+            action_deselect_all.triggered.connect(lambda: self.toggle_all_barcode_selections(False))
+            menu.addSeparator()
+
         # Copy Actions
+        stock_col = 1 if self.chk_update_barcode.isChecked() else 0
+        name_col = 3 if self.chk_update_barcode.isChecked() else 1
         action_copy_stock = menu.addAction("Stok Kodunu Kopyala")
         action_copy_name = menu.addAction("Ürün Adını Kopyala")
         
         # Connect
-        action_copy_stock.triggered.connect(lambda: self.copy_cell_data(0))
-        action_copy_name.triggered.connect(lambda: self.copy_cell_data(1))
+        action_copy_stock.triggered.connect(lambda: self.copy_cell_data(stock_col))
+        action_copy_name.triggered.connect(lambda: self.copy_cell_data(name_col))
         
         menu.exec(self.table_preview.viewport().mapToGlobal(position))
 
@@ -2478,7 +2730,69 @@ class MainWindow(QMainWindow):
         self.progress_bar_part.setValue(0)
         self.lbl_part_status.setText("Hazırlanıyor...")
         
-        self.worker = Worker(f, self.sm, self.engine)
+        existing_barcodes = set()
+        selected_stock_codes = None
+        selected_variant_ids = None
+        
+        if self.sm.get("targets", {}).get("update_barcode", False):
+            barcode_col = mappings.get("barcode_col", "")
+            if not barcode_col:
+                QMessageBox.warning(self, "Hata", "Barkod sütunu seçilmemiş! Lütfen 'Dosya Eşleştirme' sekmesinden Barkod Sütunu'nu seçin.")
+                self.btn_run.setEnabled(True)
+                self.lbl_part_status.setText("Barkod sütunu seçilmedi.")
+                return
+                
+            # Collect existing barcodes
+            for r in getattr(self, 'all_rows_cache', []):
+                raw_val = r.get(barcode_col)
+                if raw_val is not None:
+                    val = str(raw_val).strip()
+                    if val and val not in ["None", "nan", "-"]:
+                        existing_barcodes.add(val)
+            
+            # Collect selected stock codes if mode is 'selected'
+            barcode_mode = self.sm.get("targets", {}).get("barcode_mode", "all")
+            if barcode_mode == "selected":
+                selected_stock_codes = set(self.selected_barcode_stock_codes)
+                selected_variant_ids = set()
+                
+                # Check variant mode & expand to all variations of the selected products
+                is_variant_mode = mappings.get("is_variant_mode", False)
+                variant_col = mappings.get("variant_id_col", "")
+                stock_col = mappings.get("stock_code_col", "")
+                
+                if is_variant_mode and variant_col:
+                    # 1. Collect all variant IDs of selected stock codes
+                    for r in getattr(self, 'all_rows_cache', []):
+                        sc = str(r.get(stock_col, "")).strip().lower()
+                        if sc in selected_stock_codes:
+                            vid = str(r.get(variant_col, "")).strip().lower()
+                            if vid and vid not in ["", "none", "nan", "-"]:
+                                selected_variant_ids.add(vid)
+                                
+                    # 2. Add all stock codes in cache that belong to these variant IDs
+                    if selected_variant_ids:
+                        for r in getattr(self, 'all_rows_cache', []):
+                            vid = str(r.get(variant_col, "")).strip().lower()
+                            if vid in selected_variant_ids:
+                                sc = str(r.get(stock_col, "")).strip().lower()
+                                if sc:
+                                    selected_stock_codes.add(sc)
+                                    
+                if not selected_stock_codes:
+                    reply = QMessageBox.question(
+                        self,
+                        "Barkod Seçimi Uyarısı",
+                        "Barkod modu 'Seçili barkodları güncelle' olarak seçildi ancak Ürün Önizleme ekranında hiçbir ürün işaretlenmedi.\n\nİşleme yine de devam edilsin mi (seçili ürün olmadığı için hiçbir barkod güncellenmeyecektir)?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    if reply != QMessageBox.Yes:
+                        self.btn_run.setEnabled(True)
+                        self.lbl_part_status.setText("İşlem kullanıcı tarafından iptal edildi.")
+                        return
+        
+        self.worker = Worker(f, self.sm, self.engine, existing_barcodes, selected_stock_codes, selected_variant_ids)
         self.worker.progress_part.connect(self.on_part_progress)
         self.worker.log_message.connect(lambda msg: self.log(msg, "DEBUG"))
         self.worker.finished.connect(self.on_processing_finished)
